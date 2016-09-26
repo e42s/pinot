@@ -23,10 +23,11 @@ import com.linkedin.pinot.common.metrics.ServerMetrics;
 import com.linkedin.pinot.common.metrics.ServerQueryPhase;
 import com.linkedin.pinot.common.query.QueryExecutor;
 import com.linkedin.pinot.common.query.ServerQueryRequest;
+import com.linkedin.pinot.core.query.scheduler.resources.QueryExecutorService;
+import com.linkedin.pinot.core.query.scheduler.resources.UnboundedResourceManager;
 import javax.annotation.Nonnull;
 import org.apache.commons.configuration.Configuration;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 
 /**
  * First Come First Served(FCFS) query scheduler. The FCFS policy applies across all tables.
@@ -37,19 +38,19 @@ import org.slf4j.LoggerFactory;
  */
 public class FCFSQueryScheduler extends QueryScheduler {
 
-  private static Logger LOGGER = LoggerFactory.getLogger(FCFSQueryScheduler.class);
-
-  public FCFSQueryScheduler(@Nonnull Configuration schedulerConfig, @Nonnull QueryExecutor queryExecutor, @Nonnull
-      ServerMetrics serverMetrics) {
-    super(schedulerConfig, queryExecutor, serverMetrics);
+  public FCFSQueryScheduler(@Nonnull Configuration config, @Nonnull QueryExecutor queryExecutor,
+      @Nonnull ServerMetrics serverMetrics) {
+    super(queryExecutor, new UnboundedResourceManager(config), serverMetrics);
   }
 
   @Override
   public ListenableFuture<byte[]> submit(final ServerQueryRequest queryRequest) {
     Preconditions.checkNotNull(queryRequest);
     queryRequest.getTimerContext().startNewPhaseTimer(ServerQueryPhase.SCHEDULER_WAIT);
-    ListenableFutureTask<byte[]> queryTask = getQueryFutureTask(queryRequest);
-    queryRunners.submit(queryTask);
+    QueryExecutorService queryExecutorService =
+        resourceManager.getExecutorService(queryRequest, null);
+    ListenableFutureTask<byte[]> queryTask = createQueryFutureTask(queryRequest, queryExecutorService);
+    resourceManager.getQueryRunners().submit(queryTask);
     return queryTask;
   }
 
