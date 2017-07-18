@@ -130,7 +130,7 @@ public class TokenPriorityQueue implements SchedulerPriorityQueue {
         SchedulerQueryContext schedulerQueryContext;
         while ( (schedulerQueryContext = takeNextInternal()) == null) {
           try {
-            queryReaderCondition.await(200, TimeUnit.MICROSECONDS);
+            queryReaderCondition.await(1, TimeUnit.MILLISECONDS);
           } catch (InterruptedException e) {
             // continue
           }
@@ -143,60 +143,62 @@ public class TokenPriorityQueue implements SchedulerPriorityQueue {
   }
 
   private SchedulerQueryContext takeNextInternal() {
-    int selectedTokens = Integer.MIN_VALUE;
-    SchedulerTokenGroup selectedGroup = null;
+    int currentWinningTokens = Integer.MIN_VALUE;
+    SchedulerTokenGroup currentWinnerGroup = null;
     long startTime = System.nanoTime();
     StringBuilder sb = new StringBuilder("SchedulerInfo:");
+    long deadlineEpochMillis = System.currentTimeMillis() - queryDeadlineMillis;
     for (Map.Entry<String, SchedulerTokenGroup> groupInfoEntry : schedulerGroups.entrySet()) {
-      SchedulerTokenGroup currentGroup = groupInfoEntry.getValue();
-      sb.append(String.format(" {%s:[%d,%d,%d,%d,%d]},", currentGroup.name(),
-          currentGroup.getAvailableTokens(),
-          currentGroup.numPending(),
-          currentGroup.numRunning(),
-          currentGroup.getThreadsInUse(),
-          currentGroup.totalReservedThreads()));
-      if (currentGroup.isEmpty() ||
-          currentGroup.getAvailableTokens() < selectedTokens ||
-          !resourceManager.canSchedule(currentGroup)) {
+      SchedulerTokenGroup group = groupInfoEntry.getValue();
+      sb.append(String.format(" {%s:[%d,%d,%d,%d,%d]},", group.name(),
+          group.getAvailableTokens(),
+          group.numPending(),
+          group.numRunning(),
+          group.getThreadsInUse(),
+          group.totalReservedThreads()));
+      if (group.isEmpty() ||
+          group.getAvailableTokens() < currentWinningTokens ||
+          !resourceManager.canSchedule(group)) {
+        continue;
+      }
+      group.trimExpired(deadlineEpochMillis);
+      if (currentWinnerGroup == null) {
+        currentWinnerGroup = group;
         continue;
       }
 
-      if (selectedGroup == null) {
-        selectedGroup = currentGroup;
-        continue;
-      }
-      currentGroup.trimExpired(queryDeadlineMillis);
       // Preconditions:
       // a. currentGroupResources <= hardLimit
       // b. selectedGroupResources <= hardLimit
       // We prefer group with higher tokens but with resource limits.
-      // If current groupTokens are greater than selectedTokens then we choose current
-      // group over selectedGroup if
+      // If current groupTokens are greater than currentWinningTokens then we choose current
+      // group over currentWinnerGroup if
       // a. current group is using less than softLimit resources
       // b. if softLimit < currentGroupResources <= hardLimit then
-      //     i. choose currentGroup if softLimit <= selectedGroup <= hardLimit
-      //     ii. continue with selectedGroup otherwise
-      int comparison = currentGroup.compareTo(selectedGroup);
+      //     i. choose group if softLimit <= currentWinnerGroup <= hardLimit
+      //     ii. continue with currentWinnerGroup otherwise
+      int comparison = group.compareTo(currentWinnerGroup);
       if (comparison < 0) {
         continue;
       }
       if (comparison >= 0) {
-        if (currentGroup.totalReservedThreads() < resourceManager.getTableThreadsSoftLimit() ||
-            (selectedGroup.totalReservedThreads() > resourceManager.getTableThreadsSoftLimit() &&
-            currentGroup.totalReservedThreads() < selectedGroup.totalReservedThreads())) {
-          selectedGroup = currentGroup;
+        if (group.totalReservedThreads() < resourceManager.getTableThreadsSoftLimit() ||
+            (currentWinnerGroup.totalReservedThreads() > resourceManager.getTableThreadsSoftLimit() &&
+            group.totalReservedThreads() < currentWinnerGroup.totalReservedThreads())) {
+          currentWinnerGroup = group;
         }
       }
     }
+
     SchedulerQueryContext query = null;
-    if (selectedGroup != null) {
-      ServerQueryRequest queryRequest = selectedGroup.peekFirst().getQueryRequest();
-      sb.append(String.format(" Winner: %s: [%d,%d,%d,%d]", selectedGroup.name(),
+    if (currentWinnerGroup != null) {
+      ServerQueryRequest queryRequest = currentWinnerGroup.peekFirst().getQueryRequest();
+      sb.append(String.format(" Winner: %s: [%d,%d,%d,%d]", currentWinnerGroup.name(),
           queryRequest.getTimerContext().getQueryArrivalTimeMs(),
           queryRequest.getInstanceRequest().getRequestId(),
           queryRequest.getInstanceRequest().getSearchSegments().size(),
           startTime));
-      query = selectedGroup.removeFirst();
+      query = currentWinnerGroup.removeFirst();
     }
     LOGGER.info(sb.toString());
     long endTime = System.nanoTime();

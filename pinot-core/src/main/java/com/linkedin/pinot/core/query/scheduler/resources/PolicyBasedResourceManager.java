@@ -49,7 +49,7 @@ public class PolicyBasedResourceManager extends ResourceManager {
   @Override
   public QueryExecutorService getExecutorService(ServerQueryRequest query, SchedulerGroupAccountant accountant) {
     int numSegments = query.getInstanceRequest().getSearchSegmentsSize();
-     int queryThreadLimit = Math.max(1, Math.min(resourcePolicy.getMaxThreadsPerQuery(), numSegments));
+    int queryThreadLimit = Math.max(1, Math.min(resourcePolicy.getMaxThreadsPerQuery(), numSegments));
     int spareThreads = resourcePolicy.getTableThreadsHardLimit() - accountant.totalReservedThreads();
     if (spareThreads <= 0) {
       LOGGER.warn("UNEXPECTED: Attempt to schedule query uses more than the configured hard limit on threads");

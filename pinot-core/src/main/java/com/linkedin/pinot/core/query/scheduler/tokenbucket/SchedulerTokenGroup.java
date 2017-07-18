@@ -39,18 +39,38 @@ import java.util.concurrent.locks.ReentrantLock;
 public class SchedulerTokenGroup implements SchedulerGroup {
 
   private final String schedGroupName;
+  // Lifetime for which allotted token in valid. Effectively, new tokens are allotted at this frequency
   private final int tokenLifetimeMs;
+
+  // number of tokens allotted per millisecond. 1 token corresponds to 1 millisecond of wall clock time of a thread
+  // numTokensPerMs will typically correspond to the total number of threads available for execution.
+  // We over-allocate total tokens by giving each group numTokensPerMs = total threads (instead of dividing
+  // between two groups). This is for easy work-stealing - since each group will always have some pending tokens
+  // those can be scheduled if there is no other work
   private final int numTokensPerMs;
 
+  // currently available tokens for this group
   private int availableTokens;
+  // last time token values were updated for this group
   private long lastUpdateTimeMs;
+  // last time tokens were allotted for this group. Tokens are not allotted proactively after tokenLifetimeMs. Instead
+  // we allot tokens in response to events - need to scheduler queries, account for threads etc.
   private long lastTokenTimeMs;
-  private int threadsInUse;
+  // current number of threads in use
+  volatile private int threadsInUse;
+  // Queue of pending queries
   private final ConcurrentLinkedQueue<SchedulerQueryContext> pendingQueries = new ConcurrentLinkedQueue<>();
-
+  // Internal lock for synchronizing accounting
   private final Lock tokenLock = new ReentrantLock();
+  // number of running queries
   private int runningQueries = 0;
+  // constant factor for applying linear decay when allotting tokens.
+  // We apply linear decay to temporarily lower the priority for the groups that heavily
+  // used resources in the previous token cycle. Without this, groups with steady requests will
+  // get a fresh start and continue to hog high resources impacting sparse users
   private static final double ALPHA = 0.80;
+
+  // total number of worker threads reserved for currently running queries
   private AtomicInteger reservedThreads = new AtomicInteger(0);
 
   SchedulerTokenGroup(String schedGroupName, int numTokensPerMs, int tokenLifetimeMs) {
@@ -87,11 +107,11 @@ public class SchedulerTokenGroup implements SchedulerGroup {
   }
 
   @Override
-  public void trimExpired(long deadlineMillis) {
+  public void trimExpired(long deadlineEpochMillis) {
     Iterator<SchedulerQueryContext> iter = pendingQueries.iterator();
     while (iter.hasNext()) {
       SchedulerQueryContext next = iter.next();
-      if (next.getArrivalTimeMs() < deadlineMillis) {
+      if (next.getArrivalTimeMs() < deadlineEpochMillis) {
         iter.remove();
       }
     }
@@ -182,6 +202,7 @@ public class SchedulerTokenGroup implements SchedulerGroup {
 
   // callers must synchronize access to this method
   private void consumeTokens() {
+    // TODO: make this getCurrentTime for mocking in tests
     long currentTimeMs = System.currentTimeMillis();
     // multiple time qantas may have elapsed..hence, the modulo operation
     int diffMs = (int) (currentTimeMs - lastUpdateTimeMs);
@@ -234,6 +255,11 @@ public class SchedulerTokenGroup implements SchedulerGroup {
     if (rhs == null) {
       return 1;
     }
+
+    if (this == rhs) {
+      return 0;
+    }
+
     int leftTokens = getAvailableTokens();
     int rightTokens = ((SchedulerTokenGroup) rhs).getAvailableTokens();
     if (leftTokens > rightTokens) {

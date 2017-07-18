@@ -23,7 +23,9 @@ import javax.annotation.Nonnull;
  */
 public interface SchedulerPriorityQueue {
   /**
-   * Adds a query to the scheduler priority queue.
+   * Adds a query to the scheduler priority queue. This call always succeeds or
+   * throws exception if the queues are out of capacity. This will never block for
+   * resources to become available.
    * @param query query to add to the list of waiters
    * @throws OutOfCapacityError if the internal query queues are full
    */
