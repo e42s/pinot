@@ -93,6 +93,11 @@ public abstract class ResourceManager {
         Executors.newFixedThreadPool(numQueryWorkerThreads, queryWorkersFactory));
   }
 
+  public void stop() {
+    queryWorkers.shutdownNow();
+    queryRunners.shutdownNow();
+  }
+
   /**
    * Total number of query runner threads. Query runner threads are 'main'
    * threads executing the query.

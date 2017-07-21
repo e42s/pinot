@@ -118,6 +118,7 @@ public class ServerInstance {
       _queryExecutor.shutDown();
       _instanceDataManager.shutDown();
       _nettyServer.shutdownGracefully();
+      _queryScheduler.stop();
       _istarted = false;
       LOGGER.info("ServerInstance is ShutDown Completely!");
     } else {

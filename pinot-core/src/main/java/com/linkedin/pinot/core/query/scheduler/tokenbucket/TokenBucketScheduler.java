@@ -16,18 +16,15 @@
 
 package com.linkedin.pinot.core.query.scheduler.tokenbucket;
 
-import com.google.common.util.concurrent.Futures;
+import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListenableFutureTask;
 import com.google.common.util.concurrent.MoreExecutors;
-import com.linkedin.pinot.common.exception.QueryException;
 import com.linkedin.pinot.common.metrics.ServerMeter;
 import com.linkedin.pinot.common.metrics.ServerMetrics;
 import com.linkedin.pinot.common.metrics.ServerQueryPhase;
 import com.linkedin.pinot.common.query.QueryExecutor;
 import com.linkedin.pinot.common.query.ServerQueryRequest;
-import com.linkedin.pinot.common.utils.DataTable;
-import com.linkedin.pinot.core.common.datatable.DataTableImplV2;
 import com.linkedin.pinot.core.query.scheduler.OutOfCapacityError;
 import com.linkedin.pinot.core.query.scheduler.QueryScheduler;
 import com.linkedin.pinot.core.query.scheduler.SchedulerQueryContext;
@@ -59,30 +56,31 @@ public class TokenBucketScheduler extends QueryScheduler {
 
   @Override
   public ListenableFuture<byte[]> submit(@Nullable final ServerQueryRequest queryRequest) {
+    Preconditions.checkNotNull(queryRequest);
+    if (! isRunning) {
+      return internalErrorResponse(queryRequest);
+    }
+
     queryRequest.getTimerContext().startNewPhaseTimer(ServerQueryPhase.SCHEDULER_WAIT);
     final SchedulerQueryContext schedQueryContext = new SchedulerQueryContext(queryRequest);
     try {
       queryQueue.put(schedQueryContext);
     } catch (OutOfCapacityError e) {
       LOGGER.error("Out of capacity for table {}, message: {}", queryRequest.getTableName(), e.getMessage());
-      return outOfCapacityResponse(queryRequest);
+      return internalErrorResponse(queryRequest);
     }
     serverMetrics.addMeteredTableValue(queryRequest.getTableName(), ServerMeter.QUERIES, 1);
     return schedQueryContext.getResultFuture();
   }
 
-  private ListenableFuture<byte[]> outOfCapacityResponse(ServerQueryRequest queryRequest) {
-    DataTable result = new DataTableImplV2();
-    result.addException(QueryException.INTERNAL_ERROR);
-    return Futures.immediateFuture(QueryScheduler.serializeDataTable(queryRequest, result));
-  }
 
   @Override
   public void start() {
+    super.start();
     Thread scheduler = new Thread(new Runnable() {
       @Override
       public void run() {
-        while(true) {
+        while (isRunning) {
           try {
             runningQueriesSemaphore.acquire();
           } catch (InterruptedException e) {

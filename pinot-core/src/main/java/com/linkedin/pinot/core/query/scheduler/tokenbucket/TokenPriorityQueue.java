@@ -52,8 +52,12 @@ public class TokenPriorityQueue implements SchedulerPriorityQueue {
   public static final String TOKEN_LIFETIME_MS_KEY = "token_lifetime_ms";
   private static final String QUERY_DEADLINE_SECONDS_KEY = "query_deadline_seconds";
   private static final String MAX_PENDING_PER_GROUP_KEY = "max_pending_per_group";
+  private static final String QUEUE_WAKEUP_MICROS = "queue_wakeup_micros";
 
   private static final int DEFAULT_TOKEN_LIFETIME_MS = 100;
+  private static final int DEFAULT_WAKEUP_MICROS = 1000;
+
+  private static int wakeUpTimeMicros = DEFAULT_WAKEUP_MICROS;
 
   private final Map<String, SchedulerTokenGroup> schedulerGroups = new HashMap<>();
   private final Lock queueLock = new ReentrantLock();
@@ -76,6 +80,7 @@ public class TokenPriorityQueue implements SchedulerPriorityQueue {
     tokenLifetimeMs = config.getInt(TOKEN_LIFETIME_MS_KEY, DEFAULT_TOKEN_LIFETIME_MS);
     queryDeadlineMillis = config.getInt(QUERY_DEADLINE_SECONDS_KEY, 30) * 1000;
     maxPendingPerGroup = config.getInt(MAX_PENDING_PER_GROUP_KEY, 10);
+    wakeUpTimeMicros = config.getInt(QUEUE_WAKEUP_MICROS, DEFAULT_WAKEUP_MICROS);
     this.resourceManager = resourceManager;
     // TODO: This should be wired in based on configuration in future
     this.groupSelector = new TableBasedGroupMapper();
@@ -130,7 +135,7 @@ public class TokenPriorityQueue implements SchedulerPriorityQueue {
         SchedulerQueryContext schedulerQueryContext;
         while ( (schedulerQueryContext = takeNextInternal()) == null) {
           try {
-            queryReaderCondition.await(1, TimeUnit.MILLISECONDS);
+            queryReaderCondition.await(wakeUpTimeMicros, TimeUnit.MICROSECONDS);
           } catch (InterruptedException e) {
             // continue
           }

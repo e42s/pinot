@@ -18,6 +18,7 @@ package com.linkedin.pinot.core.query.scheduler;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
+import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListenableFutureTask;
 import com.linkedin.pinot.common.exception.QueryException;
@@ -49,10 +50,10 @@ public abstract class QueryScheduler {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(QueryScheduler.class);
 
-
   protected final ServerMetrics serverMetrics;
   protected final QueryExecutor queryExecutor;
   protected final ResourceManager resourceManager;
+  protected volatile boolean isRunning = false;
 
   /**
    * Constructor to initialize QueryScheduler based on scheduler configuration.
@@ -78,7 +79,17 @@ public abstract class QueryScheduler {
   /**
    * Start query scheduler thread
    */
-  public abstract void start();
+  public void start() {
+    isRunning = true;
+  }
+
+  /**
+   * stop the scheduler and shutdown services
+   */
+  public void stop() {
+    resourceManager.stop();
+    isRunning = false;
+  }
 
   @VisibleForTesting
   public ExecutorService getQueryWorkers() {
@@ -162,5 +173,11 @@ public abstract class QueryScheduler {
     timerContext.getPhaseTimer(ServerQueryPhase.TOTAL_QUERY_TIME).stopAndRecord();
 
     return responseByte;
+  }
+
+  protected ListenableFuture<byte[]> internalErrorResponse(ServerQueryRequest queryRequest) {
+    DataTable result = new DataTableImplV2();
+    result.addException(QueryException.INTERNAL_ERROR);
+    return Futures.immediateFuture(QueryScheduler.serializeDataTable(queryRequest, result));
   }
 }
